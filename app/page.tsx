@@ -8,6 +8,7 @@ import { VideoCanvasPlayer } from '@/components/VideoCanvasPlayer';
 import { SubtitleEditor } from '@/components/SubtitleEditor';
 import { PublishingHub } from '@/components/PublishingHub';
 import { ExportModal } from '@/components/ExportModal';
+import { BatchVoiceGenerator } from '@/components/BatchVoiceGenerator';
 import {
   ProjectV7,
   ValidationReport,
@@ -27,17 +28,23 @@ export default function StudioPage() {
   const [isExportOpen, setIsExportOpen] = useState<boolean>(false);
   const [notification, setNotification] = useState<string | null>(null);
 
-  // Subtitle settings (User selected: Default to English only)
+  const [selectedVoiceId, setSelectedVoiceId] = useState<string>('en-GB-RyanNeural');
+
+  // Subtitle settings (User selected: Default to English only with Karaoke & Glassmorphic Box)
   const [subtitleSettings, setSubtitleSettings] = useState<SubtitleStyleSettings>({
     displayMode: 'en',
     fontFamily: 'Cairo',
     fontSize: 42,
     textColor: '#FFFFFF',
-    textSecondaryColor: '#FDE047',
-    backgroundColor: 'rgba(0, 0, 0, 0.75)',
+    textSecondaryColor: '#38BDF8',
+    backgroundColor: 'rgba(10, 15, 30, 0.72)',
     backgroundPadding: 16,
     positionY: 8,
     showTextShadow: true,
+    karaokeEnabled: true,
+    karaokeHighlightColor: '#FDE047',
+    backdropStyle: 'glassmorphic',
+    boxBorder: true,
   });
 
   // Channel Watermark settings (MachinaMind)
@@ -115,6 +122,35 @@ export default function StudioPage() {
             return {
               ...sc,
               matchedImageData: match.dataUrl,
+            };
+          }
+          return sc;
+        });
+        return { ...ch, scenes: updatedScenes };
+      });
+      return { ...prev, chapters: updatedChapters };
+    });
+  };
+
+  const handleBatchVoiceSync = (
+    updates: Array<{ index: number; duration: number; wordTimings: any[] }>
+  ) => {
+    if (!project) return;
+    const updatesMap = new Map<number, { duration: number; wordTimings: any[] }>();
+    updates.forEach((u) => updatesMap.set(u.index, { duration: u.duration, wordTimings: u.wordTimings }));
+
+    setProject((prev) => {
+      if (!prev) return prev;
+      let globalIdx = 0;
+      const updatedChapters = prev.chapters.map((ch) => {
+        const updatedScenes = ch.scenes.map((sc) => {
+          const currentIdx = globalIdx++;
+          const match = updatesMap.get(currentIdx);
+          if (match) {
+            return {
+              ...sc,
+              duration: match.duration,
+              wordTimings: match.wordTimings,
             };
           }
           return sc;
@@ -250,6 +286,15 @@ export default function StudioPage() {
             {/* Tab 1: Workspace & Image Sync */}
             {activeTab === 'workspace' && (
               <div className="space-y-8 animate-fade-in">
+                {/* Batch Voice Synthesis & Deep British Voice Suite */}
+                <BatchVoiceGenerator
+                  scenes={scenes}
+                  onBatchUpdateScenes={handleBatchVoiceSync}
+                  onNotify={showNotification}
+                  selectedVoiceId={selectedVoiceId}
+                  onSelectVoiceId={setSelectedVoiceId}
+                />
+
                 <ImageSyncHub
                   scenes={scenes}
                   onUpdateScene={handleUpdateScene}
@@ -274,8 +319,17 @@ export default function StudioPage() {
                   scenes={scenes}
                   subtitleSettings={subtitleSettings}
                   watermarkSettings={watermarkSettings}
+                  selectedVoiceId={selectedVoiceId}
                   onUpdateSubtitleSettings={(up) => setSubtitleSettings((prev) => ({ ...prev, ...up }))}
                   onUpdateWatermarkSettings={(up) => setWatermarkSettings((prev) => ({ ...prev, ...up }))}
+                />
+
+                <BatchVoiceGenerator
+                  scenes={scenes}
+                  onBatchUpdateScenes={handleBatchVoiceSync}
+                  onNotify={showNotification}
+                  selectedVoiceId={selectedVoiceId}
+                  onSelectVoiceId={setSelectedVoiceId}
                 />
               </div>
             )}

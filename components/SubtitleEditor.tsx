@@ -171,20 +171,52 @@ export function SubtitleEditor({
             </select>
           </div>
 
-          {/* Font Size */}
-          <div>
-            <div className="flex items-center justify-between mb-1.5">
-              <label className="text-slate-400 font-medium">Font Size:</label>
-              <span className="font-mono text-slate-300">{subtitleSettings.fontSize}px</span>
+          {/* Font Size & Karaoke */}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <label className="text-slate-400 font-medium">Font Size ({subtitleSettings.fontSize}px):</label>
+              <input
+                type="range"
+                min={28}
+                max={60}
+                value={subtitleSettings.fontSize}
+                onChange={(e) => onUpdateSubtitleSettings({ fontSize: Number(e.target.value) })}
+                className="w-24 h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-sky-400"
+              />
             </div>
-            <input
-              type="range"
-              min={28}
-              max={60}
-              value={subtitleSettings.fontSize}
-              onChange={(e) => onUpdateSubtitleSettings({ fontSize: Number(e.target.value) })}
-              className="w-full h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-sky-400"
-            />
+
+            <div className="flex items-center justify-between pt-1 border-t border-slate-800">
+              <span className="text-slate-400 font-medium">Karaoke Word Highlight:</span>
+              <input
+                type="checkbox"
+                checked={subtitleSettings.karaokeEnabled}
+                onChange={(e) => onUpdateSubtitleSettings({ karaokeEnabled: e.target.checked })}
+                className="accent-sky-400 rounded"
+              />
+            </div>
+
+            {subtitleSettings.karaokeEnabled && (
+              <div className="flex items-center justify-between pt-1">
+                <span className="text-[11px] text-slate-500">Glow Color:</span>
+                <div className="flex items-center gap-1.5">
+                  {[
+                    { name: 'Gold', color: '#FDE047' },
+                    { name: 'Cyan', color: '#38BDF8' },
+                    { name: 'Emerald', color: '#34D399' },
+                  ].map((c) => (
+                    <button
+                      key={c.color}
+                      onClick={() => onUpdateSubtitleSettings({ karaokeHighlightColor: c.color })}
+                      style={{ backgroundColor: c.color }}
+                      className={`w-4 h-4 rounded-full border transition-all ${
+                        subtitleSettings.karaokeHighlightColor === c.color ? 'ring-2 ring-white scale-110' : 'opacity-60 hover:opacity-100'
+                      }`}
+                      title={c.name}
+                    />
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Subtitle Downloads */}

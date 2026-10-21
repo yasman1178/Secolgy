@@ -22,6 +22,7 @@ interface VideoCanvasPlayerProps {
   watermarkSettings: ChannelWatermarkSettings;
   onUpdateSubtitleSettings: (updated: Partial<SubtitleStyleSettings>) => void;
   onUpdateWatermarkSettings: (updated: Partial<ChannelWatermarkSettings>) => void;
+  selectedVoiceId?: string;
 }
 
 export function VideoCanvasPlayer({
@@ -30,6 +31,7 @@ export function VideoCanvasPlayer({
   watermarkSettings,
   onUpdateSubtitleSettings,
   onUpdateWatermarkSettings,
+  selectedVoiceId = 'en-GB-RyanNeural',
 }: VideoCanvasPlayerProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -84,20 +86,25 @@ export function VideoCanvasPlayer({
     if (!scene || !scene.narration_text) return;
 
     const utterance = new SpeechSynthesisUtterance(scene.narration_text);
-    utterance.lang = 'en-US';
-    utterance.rate = playbackSpeed;
+    utterance.lang = selectedVoiceId.startsWith('en-GB') ? 'en-GB' : 'en-US';
+    utterance.rate = playbackSpeed * 0.95;
+    utterance.pitch = 0.85; // Deep documentary baritone
 
-    // Pick English natural voice if available
     const voices = window.speechSynthesis.getVoices();
-    const englishVoice = voices.find((v) => v.lang.startsWith('en') && (v.name.includes('Natural') || v.name.includes('Neural') || v.name.includes('Google'))) ||
+    const isBritish = selectedVoiceId.startsWith('en-GB');
+
+    const voice =
+      voices.find((v) => v.lang.startsWith(isBritish ? 'en-GB' : 'en-US') && (v.name.includes('Ryan') || v.name.includes('Oliver') || v.name.includes('George') || v.name.includes('Male') || v.name.includes('Natural') || v.name.includes('Google'))) ||
+      voices.find((v) => v.lang.startsWith(isBritish ? 'en-GB' : 'en-US')) ||
       voices.find((v) => v.lang.startsWith('en'));
-    if (englishVoice) {
-      utterance.voice = englishVoice;
+
+    if (voice) {
+      utterance.voice = voice;
     }
 
     currentSpeechUtterance.current = utterance;
     window.speechSynthesis.speak(utterance);
-  }, [scenes, isAudioEnabled, playbackSpeed]);
+  }, [scenes, isAudioEnabled, playbackSpeed, selectedVoiceId]);
 
   // Request Animation Frame Render Loop
   const lastTimestampRef = useRef<number | null>(null);
@@ -163,11 +170,14 @@ export function VideoCanvasPlayer({
             currentImage: currentImg,
             previousImage: prevImg,
             progress: sceneProgress,
+            sceneElapsed,
+            sceneDuration: currentTiming.duration || 10,
             motion: activeScene?.motion || 'zoom_in',
             transitionProgress,
             transitionType: activeScene?.transition || 'dissolve',
             subtitleEn: activeScene?.subtitleEn || activeScene?.narration_text,
             subtitleAr: activeScene?.subtitleAr,
+            wordTimings: activeScene?.wordTimings,
             subtitleSettings,
             watermarkSettings,
           });
@@ -333,6 +343,44 @@ export function VideoCanvasPlayer({
               </select>
             </div>
 
+            {/* Karaoke Word-by-Word Highlight */}
+            <div className="p-2.5 rounded-lg bg-slate-900 border border-slate-800 space-y-2">
+              <label className="flex items-center justify-between cursor-pointer">
+                <span className="text-slate-300 font-medium">Karaoke Word Highlight:</span>
+                <input
+                  type="checkbox"
+                  checked={subtitleSettings.karaokeEnabled}
+                  onChange={(e) => onUpdateSubtitleSettings({ karaokeEnabled: e.target.checked })}
+                  className="accent-sky-400 rounded"
+                />
+              </label>
+
+              {subtitleSettings.karaokeEnabled && (
+                <div className="flex items-center justify-between pt-1 border-t border-slate-850">
+                  <span className="text-slate-400">Word Glow Color:</span>
+                  <div className="flex items-center gap-1.5">
+                    {[
+                      { name: 'Gold', color: '#FDE047' },
+                      { name: 'Cyan', color: '#38BDF8' },
+                      { name: 'Emerald', color: '#34D399' },
+                    ].map((col) => (
+                      <button
+                        key={col.color}
+                        onClick={() => onUpdateSubtitleSettings({ karaokeHighlightColor: col.color })}
+                        style={{ backgroundColor: col.color }}
+                        className={`w-5 h-5 rounded-full border transition-all ${
+                          subtitleSettings.karaokeHighlightColor === col.color
+                            ? 'ring-2 ring-white scale-110'
+                            : 'opacity-70 hover:opacity-100'
+                        }`}
+                        title={col.name}
+                      />
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
             {/* Font Size & Bar Opacity */}
             <div className="space-y-2">
               <div className="flex items-center justify-between">
@@ -345,6 +393,19 @@ export function VideoCanvasPlayer({
                   onChange={(e) => onUpdateSubtitleSettings({ fontSize: Number(e.target.value) })}
                   className="w-32 accent-sky-400"
                 />
+              </div>
+
+              <div className="flex items-center justify-between">
+                <span className="text-slate-400">Box Style:</span>
+                <select
+                  value={subtitleSettings.backdropStyle}
+                  onChange={(e) => onUpdateSubtitleSettings({ backdropStyle: e.target.value as any })}
+                  className="bg-slate-900 border border-slate-800 rounded px-2 py-1 text-slate-200 text-xs"
+                >
+                  <option value="glassmorphic">Glassmorphic (Frosted)</option>
+                  <option value="solid">Documentary Solid</option>
+                  <option value="minimal">Minimal</option>
+                </select>
               </div>
 
               <div className="flex items-center justify-between">

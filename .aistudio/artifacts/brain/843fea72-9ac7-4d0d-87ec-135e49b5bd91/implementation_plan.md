@@ -1,74 +1,88 @@
-# Fix: Smart Auto-Match & Image Synchronization Engine
+# Deep British Voice Suite, Batch Voice Generation & Karaoke Subtitles
 
-A comprehensive solution to resolve image mismatch issues when uploading custom-named or numbered files (e.g., `1.png`, `sc01.jpg`, `scene_01.webp`) into MachinaMind Studio.
+A comprehensive upgrade to MachinaMind Studio adding authoritative Deep British documentary voice profiles, an automated one-click batch voice synthesis engine that measures audio durations, and cinematic word-by-word karaoke subtitles rendered inside a glassmorphic container.
 
 ## User Review & Critical Decisions
 
 > [!IMPORTANT]
-> Based on your answers, the matching engine will be upgraded from rigid filename equality to a **Multi-Strategy Smart Matcher**:
-> 1. **Numerical Extraction Match**: Automatically extracts digits from filenames (`1.png`, `01.jpg`, `sc01`, `scene1`, `img_001`) and pairs them directly with the corresponding scene index or scene number.
-> 2. **Sequential Order Fallback**: Sorts uploaded files using natural numerical sorting (`1, 2, ..., 10, 11`) and maps them sequentially (1st file -> 1st scene, 2nd file -> 2nd scene).
-> 3. **Atomic State Dispatch**: Replaces parallel individual `FileReader` callbacks with a single batched atomic update to prevent React state race conditions.
-> 4. **Visual Mapping Inspector**: Adds a review drawer showing exactly which file matched each scene, with instant reassignment dropdowns and a "Re-match by Order" button.
+> The following design specifications were aligned during the clarification interview:
+
+- **Confirmed Decision 1 (Deep British Voice Profiles)**: Curated library of authoritative British documentary voices:
+  - `en-GB-RyanNeural` (Default: Deep, calculating, historical documentary tone)
+  - `en-GB-OliverNeural` (Gravelly BBC nature & historical essayist)
+  - `en-GB-ThomasNeural` (Deep resonant broadcast narrator)
+  - `en-GB-BrianNeural` (Mature philosophical timbre)
+  - Adjustable pitch control (down to `-20%` for deeper, cinematic baritone authority) and pacing speed (`0.85x` to `1.2x`).
+- **Confirmed Decision 2 (Batch Voice Synthesis Engine)**: A dedicated "Generate All Voices at Once" control that:
+  - Iterates through all scenes with real-time progress (`Generating Scene 4/33...`).
+  - Measures real audio duration with Web Audio API.
+  - Automatically updates each scene's duration and recalculates the total video timeline with realistic inter-sentence pauses.
+  - Enables per-scene audio preview playback and re-generation.
+- **Confirmed Decision 3 (Karaoke Subtitle Display & Glassmorphic Box)**:
+  - Real-time word-by-word active highlight (words illuminate in electric gold `#FDE047` / cyan `#38BDF8` as spoken).
+  - High-end glassmorphic container (`rgba(10, 15, 30, 0.72)` with rounded corners, subtle white hairline stroke, and optical contrast scrim).
+  - Fully supports Dual Bilingual mode (English karaoke active line on top + elegant Cairo Arabic translation below).
 
 ---
 
-## 1. Problem Analysis & Root Cause
-
-1. **Rigid String Matching**: The previous implementation checked `fileName.includes(scene_id)`. For example, a file named `1.png` or `01.jpg` did not match a scene with `scene_id: "sc001"` or `image_filename: "ch01_sc001_florence_dawn.png"`.
-2. **Extension Discrepancies**: The JSON script might specify `.png`, but creators frequently download or export `.jpg`, `.jpeg`, or `.webp`.
-3. **Asynchronous State Tearing**: Reading multiple files concurrently with `new FileReader()` triggered rapid asynchronous `setProject` calls, causing state collisions and lost updates in React.
-
----
-
-## 2. Technical Architecture & Matching Pipeline
+## 1. Technical Architecture & Voice Pipeline
 
 ```
-Uploaded Files: [1.png, 2.jpg, sc03.webp, ...]
-                    │
-                    ▼
 ┌────────────────────────────────────────────────────────┐
-│             Smart Auto-Matching Pipeline               │
+│             Batch Voiceover Synthesizer                │
 │                                                        │
-│  Stage 1: Normalized Exact Name & Stem Match           │
-│           (strips extensions, lowercase, trims)        │
-│                                                        │
-│  Stage 2: Number & Digit Extractor                     │
-│           (e.g., "sc01.jpg" -> 1 -> Scene #1)          │
-│                                                        │
-│  Stage 3: Natural Numeric Sort & Sequential Mapping    │
-│           ([1, 2, 3...] -> [Scene 1, Scene 2, ...])   │
-│                                                        │
-│  Stage 4: Fuzzy Token Similarity                       │
-└───────────────────────────┬────────────────────────────┘
-                            │
-                            ▼
+│  [Generate All Voices] ──▶ Normalizes Narration Text   │
+│                                  │                     │
+│                                  ▼                     │
+│                       Server TTS / Web Audio           │
+│                                  │                     │
+│                                  ▼                     │
+│                    Computes Word Boundaries (ms)       │
+│                                  │                     │
+│                                  ▼                     │
+│               Recalculates Scene Duration (seconds)    │
+└──────────────────────────────────┬─────────────────────┘
+                                   │
+                                   ▼
 ┌────────────────────────────────────────────────────────┐
-│           Atomic Batch State Dispatcher                │
-│  • Reads all files in parallel via Promise.all         │
-│  • Compiles Map<sceneIndex, dataUrl> in memory         │
-│  • Commits single atomic project state update          │
+│             16:9 Canvas Karaoke Renderer               │
+│                                                        │
+│  • Reads current scene elapsed time                    │
+│  • Matches active spoken word by timing                │
+│  • Renders glassmorphic frosted rounded rect           │
+│  • Draws words with Gold highlight on current word     │
+│  • Draws Arabic translation below (Cairo font, RTL)    │
 └────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## 3. Key Enhancements & User Experience
+## 2. Component Enhancements
 
-- **Multi-File & Folder Dropper**: Supports dropping individual files, folders (`webkitdirectory`), or multiple selections.
-- **Smart Number Parser**: Extracts numbers irrespective of prefixes (`sc`, `scene_`, `img`, `frame_`, `ch01_sc`, etc.).
-- **Atomic Loading State**: Displays a clean loading progress bar during batch processing (`Reading 33 files... 100%`) before committing.
-- **Visual Match Review & Unmatched Tray**:
-  - Highlights matched files in green with preview thumbnails.
-  - If any file remains ambiguous, shows an unmatched tray where creators can click to assign it to any scene.
-  - "Force Sequential Match (1 to N)" button for when files were exported in order from tools like Midjourney or Stable Diffusion.
-- **Single-Scene Quick Upload**: Direct drop or click on any individual scene card to replace its image.
+1. **`lib/voice-profiles.ts`**:
+   - British documentary voice profiles (`Ryan`, `Oliver`, `Thomas`, `Brian`, `Alfie`).
+   - Deep pitch tuning presets (`Standard Baritone`, `Deep BBC Documentary -10%`, `Cinematic Deep Trailer -20%`).
+   - Word boundary timing calculator.
+2. **`lib/ken-burns.ts`**:
+   - Upgrade `drawSubtitles` to support word-by-word karaoke highlighting.
+   - Computes layout for active words, applying high-visibility gold/cyan fill and soft glow to the current word.
+   - Glassmorphic backdrop box with rounded corners and subtle border.
+3. **`components/BatchVoiceGenerator.tsx`**:
+   - "Generate All Voiceovers at Once" button.
+   - Progress bar with percentage, ETA, and Pause/Cancel controls.
+   - Timeline synchronization button ("Apply Durations to Video Timeline").
+   - Per-scene audio play/pause preview button.
+4. **`components/SubtitleControls.tsx` & Player Overlays**:
+   - Karaoke toggle (On/Off).
+   - Word highlight color picker (Gold, Electric Cyan, Emerald, White).
+   - Glassmorphic blur & opacity sliders.
 
 ---
 
-## 4. Implementation Steps (Post-Approval)
+## 3. Implementation Steps (Post-Approval)
 
-1. **`lib/image-matcher.ts`**: Implement numerical extraction, natural sorting algorithm, and multi-tier matching heuristics.
-2. **Update `components/ImageSyncHub.tsx`**: Add `Promise.all` atomic file reader, visual matching feedback, sequential mapping button, and manual assignment dropdowns.
-3. **Update `app/page.tsx`**: Implement `handleBatchUpdateScenes(updates: Map<number, Partial<SceneV7>>)` for unified atomic state commit.
-4. **Verification & Testing**: Verify with edge-case filenames (`1.png`, `01.jpg`, `scene_1.webp`, `sc001.png`, `image (1).png`) and run `compile_applet` and `lint_applet`.
+1. Create `lib/voice-profiles.ts` with curated British voices and audio timing computation.
+2. Update `lib/ken-burns.ts` to implement glassmorphic box math and word-by-word karaoke highlights.
+3. Build `components/BatchVoiceGenerator.tsx` modal & toolbar in the studio.
+4. Integrate batch voice generation and karaoke options into `components/VideoCanvasPlayer.tsx` and `app/page.tsx`.
+5. Verify build and lint with `compile_applet` and `lint_applet`.

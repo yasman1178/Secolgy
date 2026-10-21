@@ -7,11 +7,14 @@ export interface RenderFrameParams {
   currentImage: HTMLImageElement | null;
   previousImage: HTMLImageElement | null;
   progress: number; // 0.0 to 1.0 in current scene
+  sceneElapsed?: number; // current elapsed seconds in this scene
+  sceneDuration?: number; // total duration of current scene in seconds
   motion: MotionType;
   transitionProgress: number; // 0.0 to 1.0 during transition (e.g. first 0.6s)
   transitionType: 'cut' | 'fade' | 'dissolve';
   subtitleEn?: string;
   subtitleAr?: string;
+  wordTimings?: Array<{ word: string; startSec: number; endSec: number }>;
   subtitleSettings: SubtitleStyleSettings;
   watermarkSettings: ChannelWatermarkSettings;
 }
@@ -23,15 +26,18 @@ export function draw16x9Frame({
   currentImage,
   previousImage,
   progress,
+  sceneElapsed = 0,
+  sceneDuration = 10,
   motion,
   transitionProgress,
   transitionType,
   subtitleEn,
   subtitleAr,
+  wordTimings,
   subtitleSettings,
   watermarkSettings,
 }: RenderFrameParams) {
-  // Clear canvas
+  // Clear canvas with deep dark baseline
   ctx.fillStyle = '#050811';
   ctx.fillRect(0, 0, canvasWidth, canvasHeight);
 
@@ -42,14 +48,11 @@ export function draw16x9Frame({
     // If dissolve or fade transition from previous image
     if (previousImage && previousImage.complete && transitionProgress < 1.0 && transitionType !== 'cut') {
       if (transitionType === 'dissolve') {
-        // Draw previous image first
         drawImageWithMotion(ctx, previousImage, canvasWidth, canvasHeight, 1.0, motion);
-        // Overlay current image with alpha
         ctx.globalAlpha = transitionProgress;
         drawImageWithMotion(ctx, currentImage, canvasWidth, canvasHeight, progress, motion);
         ctx.globalAlpha = 1.0;
       } else if (transitionType === 'fade') {
-        // Fade to black then fade in
         if (transitionProgress < 0.5) {
           const fadeOutAlpha = 1.0 - transitionProgress * 2;
           ctx.globalAlpha = fadeOutAlpha;
@@ -69,7 +72,7 @@ export function draw16x9Frame({
 
     ctx.restore();
   } else {
-    // Elegant fallback canvas when no image loaded yet
+    // Elegant fallback canvas
     drawFallbackCanvas(ctx, canvasWidth, canvasHeight);
   }
 
@@ -78,9 +81,19 @@ export function draw16x9Frame({
     drawWatermark(ctx, canvasWidth, canvasHeight, watermarkSettings);
   }
 
-  // 3. Draw Subtitles (if enabled)
+  // 3. Draw Subtitles with Karaoke & Glassmorphic Backdrop
   if (subtitleSettings.displayMode !== 'off') {
-    drawSubtitles(ctx, canvasWidth, canvasHeight, subtitleEn, subtitleAr, subtitleSettings);
+    drawSubtitles({
+      ctx,
+      w: canvasWidth,
+      h: canvasHeight,
+      subEn: subtitleEn,
+      subAr: subtitleAr,
+      sceneElapsed,
+      sceneDuration,
+      wordTimings,
+      settings: subtitleSettings,
+    });
   }
 }
 
@@ -92,10 +105,8 @@ function drawImageWithMotion(
   progress: number,
   motion: MotionType
 ) {
-  // Clamp progress between 0 and 1
   const t = Math.max(0, Math.min(1, progress));
 
-  // Determine cover scale for image
   const imgRatio = img.naturalWidth / img.naturalHeight;
   const canvasRatio = w / h;
 
@@ -106,7 +117,6 @@ function drawImageWithMotion(
     baseScale = w / img.naturalWidth;
   }
 
-  // Motion parameter bounds
   let scale = 1.0;
   let offsetX = 0;
   let offsetY = 0;
@@ -120,11 +130,11 @@ function drawImageWithMotion(
       break;
     case 'pan_left':
       scale = 1.08;
-      offsetX = (0.5 - t) * 60; // slow drift right-to-left
+      offsetX = (0.5 - t) * 60;
       break;
     case 'pan_right':
       scale = 1.08;
-      offsetX = (t - 0.5) * 60; // slow drift left-to-right
+      offsetX = (t - 0.5) * 60;
       break;
     case 'static':
     default:
@@ -144,12 +154,12 @@ function drawImageWithMotion(
 
   ctx.drawImage(img, dx, dy, drawWidth, drawHeight);
 
-  // Subtle cinematic letterbox / vignette gradient for filmic contrast
-  const vignette = ctx.createLinearGradient(0, h * 0.7, 0, h);
+  // Cinematic lower-third gradient for subtitle readability
+  const vignette = ctx.createLinearGradient(0, h * 0.65, 0, h);
   vignette.addColorStop(0, 'rgba(0, 0, 0, 0)');
-  vignette.addColorStop(1, 'rgba(0, 0, 0, 0.7)');
+  vignette.addColorStop(1, 'rgba(0, 0, 0, 0.78)');
   ctx.fillStyle = vignette;
-  ctx.fillRect(0, h * 0.7, w, h * 0.3);
+  ctx.fillRect(0, h * 0.65, w, h * 0.35);
 }
 
 function drawFallbackCanvas(ctx: CanvasRenderingContext2D, w: number, h: number) {
@@ -200,11 +210,9 @@ function drawWatermark(
   ctx.textAlign = align;
   ctx.textBaseline = 'middle';
 
-  // Logo text
   const fontSize = Math.round(24 * settings.scale);
   ctx.font = `800 ${fontSize}px 'Outfit', sans-serif`;
   
-  // Shadow
   ctx.shadowColor = 'rgba(0, 0, 0, 0.8)';
   ctx.shadowBlur = 8;
   ctx.shadowOffsetX = 0;
@@ -213,7 +221,6 @@ function drawWatermark(
   ctx.fillStyle = '#FFFFFF';
   ctx.fillText(settings.channelName.toUpperCase(), x, y);
 
-  // Subtle accent dot
   if (align === 'right') {
     ctx.fillStyle = '#38BDF8';
     ctx.beginPath();
@@ -224,14 +231,29 @@ function drawWatermark(
   ctx.restore();
 }
 
-function drawSubtitles(
-  ctx: CanvasRenderingContext2D,
-  w: number,
-  h: number,
-  subEn: string | undefined,
-  subAr: string | undefined,
-  settings: SubtitleStyleSettings
-) {
+interface DrawSubtitlesArgs {
+  ctx: CanvasRenderingContext2D;
+  w: number;
+  h: number;
+  subEn?: string;
+  subAr?: string;
+  sceneElapsed: number;
+  sceneDuration: number;
+  wordTimings?: Array<{ word: string; startSec: number; endSec: number }>;
+  settings: SubtitleStyleSettings;
+}
+
+function drawSubtitles({
+  ctx,
+  w,
+  h,
+  subEn,
+  subAr,
+  sceneElapsed,
+  sceneDuration,
+  wordTimings,
+  settings,
+}: DrawSubtitlesArgs) {
   let primaryText = '';
   let secondaryText = '';
   let isPrimaryArabic = false;
@@ -256,68 +278,153 @@ function drawSubtitles(
 
   ctx.save();
 
-  const scaleFactor = w / 1920; // responsive scale if canvas is preview size
+  const scaleFactor = w / 1920;
   const fontSize = Math.round(settings.fontSize * scaleFactor);
-  const secondaryFontSize = Math.round(fontSize * 0.9);
-
+  const secondaryFontSize = Math.round(fontSize * 0.88);
   const fontName = settings.fontFamily || 'Cairo';
   const yBottom = h - h * (settings.positionY / 100);
 
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
 
-  // Measure and wrap primary text into max 2 lines
   const maxLineWidth = w * 0.82;
-  ctx.font = `600 ${fontSize}px '${isPrimaryArabic ? 'Cairo' : fontName}', sans-serif`;
+  ctx.font = `700 ${fontSize}px '${isPrimaryArabic ? 'Cairo' : fontName}', sans-serif`;
 
-  const primaryLines = wrapText(ctx, primaryText, maxLineWidth);
+  // Words breakdown for English Karaoke
+  const words = primaryText.split(/\s+/).filter(Boolean);
+  const wordsCount = words.length;
+
+  // Active word index calculation based on elapsed time
+  let activeWordIdx = -1;
+  if (settings.karaokeEnabled && !isPrimaryArabic && wordsCount > 0) {
+    if (wordTimings && wordTimings.length === wordsCount) {
+      activeWordIdx = wordTimings.findIndex(
+        (wt) => sceneElapsed >= wt.startSec && sceneElapsed <= wt.endSec
+      );
+    }
+    if (activeWordIdx === -1) {
+      const progressRatio = Math.max(0, Math.min(0.98, sceneElapsed / (sceneDuration || 1)));
+      activeWordIdx = Math.floor(progressRatio * wordsCount);
+    }
+  }
+
+  // Wrap into lines while tracking word indices
+  const wrappedLines: Array<{ lineText: string; startWordIdx: number; endWordIdx: number }> = [];
+  let curLine = '';
+  let startWordIdx = 0;
+
+  for (let i = 0; i < words.length; i++) {
+    const testLine = curLine ? `${curLine} ${words[i]}` : words[i];
+    const width = ctx.measureText(testLine).width;
+    if (width < maxLineWidth) {
+      curLine = testLine;
+    } else {
+      wrappedLines.push({ lineText: curLine, startWordIdx, endWordIdx: i - 1 });
+      curLine = words[i];
+      startWordIdx = i;
+    }
+  }
+  if (curLine) {
+    wrappedLines.push({ lineText: curLine, startWordIdx, endWordIdx: words.length - 1 });
+  }
+
+  // Wrap secondary text (Arabic)
   const secondaryLines = secondaryText
     ? wrapText(ctx, secondaryText, maxLineWidth)
     : [];
 
-  const totalLines = primaryLines.length + secondaryLines.length;
+  const totalLines = wrappedLines.length + secondaryLines.length;
   const lineHeight = fontSize * 1.35;
-  const boxHeight = totalLines * lineHeight + settings.backgroundPadding * scaleFactor * 2;
+  const boxHeight = totalLines * lineHeight + (settings.backgroundPadding * scaleFactor * 2.2);
   const boxY = yBottom - boxHeight;
 
-  // Background Bar
+  // Calculate box width
+  const maxMeasuredTextWidth = Math.min(
+    maxLineWidth + 60 * scaleFactor,
+    Math.max(
+      ...wrappedLines.map((l) => ctx.measureText(l.lineText).width),
+      ...secondaryLines.map((l) => ctx.measureText(l).width),
+      220
+    ) + 60 * scaleFactor
+  );
+  const boxX = (w - maxMeasuredTextWidth) / 2;
+
+  // Render Glassmorphic Backdrop
   if (settings.backgroundColor && settings.backgroundColor !== 'transparent') {
-    ctx.fillStyle = settings.backgroundColor;
-    const maxTextWidth = Math.min(
-      maxLineWidth + 60 * scaleFactor,
-      Math.max(
-        ...primaryLines.map((l) => ctx.measureText(l).width),
-        ...secondaryLines.map((l) => ctx.measureText(l).width),
-        200
-      ) + 48 * scaleFactor
-    );
+    ctx.save();
+    // Glassmorphic fill
+    ctx.fillStyle = settings.backdropStyle === 'solid'
+      ? settings.backgroundColor
+      : 'rgba(10, 15, 30, 0.72)';
 
-    const boxX = (w - maxTextWidth) / 2;
-    roundRect(ctx, boxX, boxY, maxTextWidth, boxHeight, 8 * scaleFactor);
+    roundRect(ctx, boxX, boxY, maxMeasuredTextWidth, boxHeight, 14 * scaleFactor);
     ctx.fill();
+
+    // Subtle frosted hairline border
+    if (settings.boxBorder !== false) {
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.14)';
+      ctx.lineWidth = 1.5 * scaleFactor;
+      ctx.stroke();
+    }
+    ctx.restore();
   }
 
-  // Draw Primary Text
-  ctx.fillStyle = settings.textColor || '#FFFFFF';
-  if (settings.showTextShadow) {
-    ctx.shadowColor = 'rgba(0, 0, 0, 0.9)';
-    ctx.shadowBlur = 6;
-    ctx.shadowOffsetY = 2;
-  }
+  // Draw Primary Text with Karaoke Word Highlighting
+  let currentY = boxY + (settings.backgroundPadding * scaleFactor * 1.1) + lineHeight / 2;
 
-  let currentY = boxY + settings.backgroundPadding * scaleFactor + lineHeight / 2;
+  for (const lineObj of wrappedLines) {
+    if (settings.karaokeEnabled && !isPrimaryArabic) {
+      // Draw line word-by-word
+      const lineWords = lineObj.lineText.split(' ');
+      const spaceWidth = ctx.measureText(' ').width;
+      const totalLineWidth = ctx.measureText(lineObj.lineText).width;
+      let curX = (w - totalLineWidth) / 2;
 
-  for (const line of primaryLines) {
-    ctx.font = `700 ${fontSize}px '${isPrimaryArabic ? 'Cairo' : fontName}', sans-serif`;
-    ctx.fillText(line, w / 2, currentY);
+      lineWords.forEach((word, localIdx) => {
+        const globalIdx = lineObj.startWordIdx + localIdx;
+        const isCurrent = globalIdx === activeWordIdx;
+        const isPast = globalIdx < activeWordIdx;
+
+        ctx.save();
+        if (isCurrent) {
+          ctx.fillStyle = settings.karaokeHighlightColor || '#FDE047';
+          ctx.shadowColor = settings.karaokeHighlightColor || '#FDE047';
+          ctx.shadowBlur = 12 * scaleFactor;
+          ctx.font = `800 ${fontSize}px '${fontName}', sans-serif`;
+        } else if (isPast) {
+          ctx.fillStyle = '#FFFFFF';
+          ctx.font = `700 ${fontSize}px '${fontName}', sans-serif`;
+        } else {
+          ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
+          ctx.font = `600 ${fontSize}px '${fontName}', sans-serif`;
+        }
+
+        ctx.textAlign = 'left';
+        ctx.fillText(word, curX, currentY);
+        curX += ctx.measureText(word).width + spaceWidth;
+        ctx.restore();
+      });
+    } else {
+      // Standard line draw
+      ctx.fillStyle = settings.textColor || '#FFFFFF';
+      if (settings.showTextShadow) {
+        ctx.shadowColor = 'rgba(0, 0, 0, 0.9)';
+        ctx.shadowBlur = 6 * scaleFactor;
+        ctx.shadowOffsetY = 2 * scaleFactor;
+      }
+      ctx.textAlign = 'center';
+      ctx.font = `700 ${fontSize}px '${isPrimaryArabic ? 'Cairo' : fontName}', sans-serif`;
+      ctx.fillText(lineObj.lineText, w / 2, currentY);
+    }
     currentY += lineHeight;
   }
 
-  // Draw Secondary (Arabic for Dual mode)
+  // Draw Secondary Text (Arabic in Dual Mode)
   if (secondaryLines.length > 0) {
-    ctx.fillStyle = settings.textSecondaryColor || '#FDE047';
+    ctx.fillStyle = settings.textSecondaryColor || '#38BDF8';
+    ctx.textAlign = 'center';
     for (const line of secondaryLines) {
-      ctx.font = `600 ${secondaryFontSize}px 'Cairo', 'Tajawal', sans-serif`;
+      ctx.font = `700 ${secondaryFontSize}px 'Cairo', 'Tajawal', sans-serif`;
       ctx.fillText(line, w / 2, currentY);
       currentY += lineHeight;
     }
@@ -343,7 +450,7 @@ function wrapText(ctx: CanvasRenderingContext2D, text: string, maxWidth: number)
     }
   }
   lines.push(currentLine);
-  return lines.slice(0, 3); // Max 3 lines
+  return lines.slice(0, 3);
 }
 
 function roundRect(
