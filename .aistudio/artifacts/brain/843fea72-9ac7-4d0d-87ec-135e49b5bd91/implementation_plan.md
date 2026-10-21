@@ -1,128 +1,74 @@
-# MachinaMind 16:9 Long-Form Video Studio (v7 Engine)
+# Fix: Smart Auto-Match & Image Synchronization Engine
 
-A high-performance web studio for synchronizing long-form 16:9 horizontal videos from `chapter_XXX_v7.json` projects, matching scene images, rendering with local preview and server FFmpeg MP4 export, customizable multilingual subtitles, and publishing package management.
+A comprehensive solution to resolve image mismatch issues when uploading custom-named or numbered files (e.g., `1.png`, `sc01.jpg`, `scene_01.webp`) into MachinaMind Studio.
 
 ## User Review & Critical Decisions
 
 > [!IMPORTANT]
-> The following architectural decisions were aligned during the clarification interview:
-
-- **Confirmed Decision 1 (Export Engine)**: Server-side FFmpeg MP4 rendering endpoint (`/api/render`) that compiles 1080p 16:9 MP4 files with audio mixing, transitions, and optional burned-in subtitles, paired with an instantaneous client-side Canvas 16:9 player for frame-accurate local preview and playback.
-- **Confirmed Decision 2 (Startup State)**: The studio initializes with a clean, focused empty workspace ready for dropping or uploading a `chapter_XXX_v7.json` file and matching image files, accompanied by an optional "Load Machiavelli Sample Demo" button for testing without external files.
-- **Confirmed Decision 3 (Subtitle Defaults & Customization)**: Subtitles default to English-only display with seamless switches to Arabic-only, Bilingual (Dual EN+AR), or Off. Custom typography controls (Cairo, Tajawal, Noto Sans Arabic, Outfit, JetBrains Mono), font size sliders, backdrop opacity, and native RTL alignment are included.
-- **Confirmed Decision 4 (Channel Branding & Publishing Hub)**: Prominent "MachinaMind" channel branding with customizable on-video watermark (top-right, top-left, bottom-right, opacity control). The publishing tab provides one-click copy for clean descriptions (with automatically computed `00:00` YouTube chapter timestamps), tag cleaners (removing zero-width characters and repairing broken dividers), and Gemini-powered Arabic ⇄ English metadata translation.
-
----
-
-## 1. Overview & Core Concept
-
-- **What It Does**: Transforms documentary/essay script projects formatted in schema v7 into complete 16:9 widescreen videos (1920×1080). It synchronizes uploaded artwork with script scenes, generates/manages English narration voiceover and subtitles, translates subtitles into natural Arabic, provides Ken Burns camera dynamics (`zoom_in`, `zoom_out`, `pan_left`, `pan_right`, `static`), and outputs YouTube-ready publishing descriptions, titles, thumbnails prompts, and MP4 video.
-- **Target Audience / Persona**: Documentary video creators, faceless YouTube channel producers (MachinaMind), historical essayists, and media creators who generate structured scripts and image assets and need an automated production pipeline.
-- **Key Value**: Eliminates manual video editing in Premiere or DaVinci for automated documentaries: drag-and-drop JSON + images -> automated voiceover -> synchronized subtitles -> 1-click video render & YouTube publishing copy.
+> Based on your answers, the matching engine will be upgraded from rigid filename equality to a **Multi-Strategy Smart Matcher**:
+> 1. **Numerical Extraction Match**: Automatically extracts digits from filenames (`1.png`, `01.jpg`, `sc01`, `scene1`, `img_001`) and pairs them directly with the corresponding scene index or scene number.
+> 2. **Sequential Order Fallback**: Sorts uploaded files using natural numerical sorting (`1, 2, ..., 10, 11`) and maps them sequentially (1st file -> 1st scene, 2nd file -> 2nd scene).
+> 3. **Atomic State Dispatch**: Replaces parallel individual `FileReader` callbacks with a single batched atomic update to prevent React state race conditions.
+> 4. **Visual Mapping Inspector**: Adds a review drawer showing exactly which file matched each scene, with instant reassignment dropdowns and a "Re-match by Order" button.
 
 ---
 
-## 2. User Experience & Visual Design
+## 1. Problem Analysis & Root Cause
 
-### Key User Flows
-
-1. **Import & Validation Flow**:
-   - Creator opens MachinaMind Studio. Clean dropzone allows importing any `chapter_XXX_v7.json` file or clicking "Load Machiavelli Demo".
-   - Validator audits project structure: total scenes, word counts, expected duration vs. `target_minutes`, and lists missing image files.
-2. **Image Sync & Asset Matcher**:
-   - Multi-file image uploader allows selecting or dragging a folder of scene images (e.g. `ch01_sc001_intro.png`, `ch01_sc002_prince.png`).
-   - Matcher visually pairs each uploaded image filename with the corresponding scene. For missing images, prompts and generate/placeholder tools are provided.
-3. **Audio & Subtitle Production**:
-   - Voice selector (English natural voices e.g., `en-GB-RyanNeural`, `en-US-ChristopherNeural`, `en-US-GuyNeural`) with speed and pitch controls.
-   - Narration generator splits scenes into timed audio cues, measures exact durations, and aligns word boundaries.
-   - Multilingual subtitle editor displays English cues side-by-side with Arabic translations. Gemini API endpoint allows translating all or individual cues.
-4. **16:9 Canvas Player & Subtitle Customizer**:
-   - 16:9 widescreen stage with full playback controls (Play, Pause, Scrub, Scene Jump, Speed).
-   - Ken Burns motion engine animates images smoothly with crossfades and dissolves between scenes.
-   - MachinaMind watermark overlay with position/size controls.
-   - Subtitle overlay toggle: `[Off | English | Arabic | Dual (Bilingual)]` with font selector (`Cairo`, `Tajawal`, `Noto Sans Arabic`, `Inter`), font size, and background bar opacity.
-5. **Publishing Hub (YouTube Ready)**:
-   - YouTube Title options (with copy button).
-   - Sanitized Description box with auto-generated chapters from actual audio durations (00:00 Intro, 01:24 Chapter 1, etc.).
-   - Cleaner tool removes zero-width characters (`\u200B`), fix broken `━━━` dividers, and collapses blank lines.
-   - One-click Gemini translator converts Arabic description & titles to English or vice versa.
-   - Thumbnail concepts & prompts viewer with copyable prompts.
-6. **Video Export Center**:
-   - Server-side FFmpeg MP4 generation with resolution presets (1080p 30fps), audio ducking, and subtitle burn-in option.
-   - Direct download button for final MP4, plus export buttons for `.srt` (English), `.srt` (Arabic), and `publish.txt`.
-
-### Visual Identity & Theme
-
-- **Aesthetic Direction**: Dark-mode cinematic workstation with studio-grade polish (deep slate `#090D16`, carbon surfaces `#111827`, subtle hairline borders `#1F2937`, electric cyan/amber accents for active actions).
-- **Typography**: `Outfit` / `Plus Jakarta Sans` for display headers and UI labels; `Cairo` & `Tajawal` for Arabic typography; `JetBrains Mono` for timecodes (`00:14 / 22:30`), word counts, and tabular numerals (`tabular-nums`).
-- **Top Bar Contract**:
-  - Zone 1: MachinaMind Studio wordmark with subtle 16:9 indicator.
-  - Zone 2: Navigation tabs (`[Workspace | Timeline & Audio | Subtitles | Publishing Hub | Export]`).
-  - Zone 3: Dark/Light Mode toggle + Primary "Export MP4" CTA button.
+1. **Rigid String Matching**: The previous implementation checked `fileName.includes(scene_id)`. For example, a file named `1.png` or `01.jpg` did not match a scene with `scene_id: "sc001"` or `image_filename: "ch01_sc001_florence_dawn.png"`.
+2. **Extension Discrepancies**: The JSON script might specify `.png`, but creators frequently download or export `.jpg`, `.jpeg`, or `.webp`.
+3. **Asynchronous State Tearing**: Reading multiple files concurrently with `new FileReader()` triggered rapid asynchronous `setProject` calls, causing state collisions and lost updates in React.
 
 ---
 
-## 3. Key Product Decisions & Trade-Offs
-
-- **Decision 1: Dual-Engine Rendering (Server FFmpeg + Client Canvas)**
-  - *Chosen Approach*: Provide a real-time browser HTML5 Canvas engine for zero-wait editing and preview, combined with a dedicated server-side FFmpeg MP4 endpoint (`/api/render`) for definitive, hardware-accelerated MP4 export.
-  - *Why*: Large 20-30 minute videos strain browser memory if using client-only WebCodecs. Server FFmpeg provides rock-solid MP4 encoding without tab crashes, while Canvas provides instant interactive preview.
-- **Decision 2: IndexedDB Local Project Persistence**
-  - *Chosen Approach*: Store project state, audio blobs, and uploaded image bitmaps in browser IndexedDB via Dexie/idb-keyval.
-  - *Why*: Allows large multi-megabyte image assets and audio buffers to persist across page reloads without requiring heavy database logins.
-- **Decision 3: Gemini 2.5 Flash for Subtitle Translation & Publishing Content**
-  - *Chosen Approach*: Use Gemini API (`gemini-2.5-flash`) on server route `/api/gemini/translate` and `/api/gemini/publish` with structured JSON output schemas.
-  - *Why*: Fast, highly accurate Modern Standard Arabic (MSA) translations with preserved subtitle timecodes, and robust sanitization of YouTube descriptions and chapters.
-
----
-
-## 4. Technical Architecture & Data Strategy
+## 2. Technical Architecture & Matching Pipeline
 
 ```
-┌────────────────────────────────────────────────────────────────────────┐
-│                        MachinaMind Studio UI                           │
-│ ┌────────────────────────┐ ┌─────────────────────────────────────────┐ │
-│ │ Scene & Asset List     │ │ 16:9 Widescreen Canvas Preview Player   │ │
-│ │ • JSON v7 Validator    │ │ • Ken Burns Pan & Zoom Motion Engine    │ │
-│ │ • Image Filename Match │ │ • MachinaMind Channel Watermark Overlay │ │
-│ │ • Word Count / Times   │ │ • Dynamic Subtitle Renderer (EN/AR/Dual)│ │
-│ └────────────────────────┘ └─────────────────────────────────────────┘ │
-│ ┌────────────────────────────────────────────────────────────────────┐ │
-│ │ Bottom Workstation Tabs: [Scenes] [Audio] [Subtitles] [Publish]    │ │
-│ └────────────────────────────────────────────────────────────────────┘ │
-└────────────────────────────────────┬───────────────────────────────────┘
-                                     │
-           ┌─────────────────────────┴─────────────────────────┐
-           ▼                                                   ▼
-┌──────────────────────────────────────┐  ┌──────────────────────────────┐
-│ Browser Client Engines               │  │ Server API Proxy Endpoints   │
-│ • IndexedDB Project & Asset Storage  │  │ • /api/tts (Audio Voice Gen) │
-│ • Web Audio API (Ducking & Preview)  │  │ • /api/gemini/translate      │
-│ • Canvas 2D Transform / Crossfader   │  │ • /api/gemini/publish        │
-│ • SRT / VTT Subtitle File Exporter   │  │ • /api/render (FFmpeg MP4)   │
-└──────────────────────────────────────┘  └──────────────────────────────┘
+Uploaded Files: [1.png, 2.jpg, sc03.webp, ...]
+                    │
+                    ▼
+┌────────────────────────────────────────────────────────┐
+│             Smart Auto-Matching Pipeline               │
+│                                                        │
+│  Stage 1: Normalized Exact Name & Stem Match           │
+│           (strips extensions, lowercase, trims)        │
+│                                                        │
+│  Stage 2: Number & Digit Extractor                     │
+│           (e.g., "sc01.jpg" -> 1 -> Scene #1)          │
+│                                                        │
+│  Stage 3: Natural Numeric Sort & Sequential Mapping    │
+│           ([1, 2, 3...] -> [Scene 1, Scene 2, ...])   │
+│                                                        │
+│  Stage 4: Fuzzy Token Similarity                       │
+└───────────────────────────┬────────────────────────────┘
+                            │
+                            ▼
+┌────────────────────────────────────────────────────────┐
+│           Atomic Batch State Dispatcher                │
+│  • Reads all files in parallel via Promise.all         │
+│  • Compiles Map<sceneIndex, dataUrl> in memory         │
+│  • Commits single atomic project state update          │
+└────────────────────────────────────────────────────────┘
 ```
-
-### Component & Handler Mapping
-
-| Component | Responsibility | Primary Handlers |
-| :--- | :--- | :--- |
-| `ProjectDropzone` | File input for `chapter_v7.json` | `handleFileUpload()`, `loadSampleDemo()` |
-| `ImageMatcher` | Batch match uploaded images to scenes | `handleImageFilesDrop()`, `matchByName()` |
-| `VideoCanvasPlayer` | 16:9 canvas with Ken Burns and transitions | `play()`, `pause()`, `seek(time)`, `setSubtitles()` |
-| `SubtitleControls` | Font customization & language switcher | `setMode()`, `setFont()`, `setSize()`, `setBackdrop()` |
-| `PublishingHub` | Title, description, tags, clean chapters | `copyField()`, `cleanFormatting()`, `translateMetadata()` |
-| `ExportModal` | MP4 rendering with progress and ETA | `startFFmpegRender()`, `downloadSRT()`, `downloadPublish()` |
 
 ---
 
-## 5. Implementation Phases (Post-Approval)
+## 3. Key Enhancements & User Experience
 
-1. **Setup & Dependencies**: Configure packages (`@google/genai`, audio utilities, lucide icons) and project types for schema v7.
-2. **Core Studio State & IndexedDB Store**: Build Zustand/Context store handling project metadata, scenes, image assets (object URLs/blobs), audio timings, and subtitles.
-3. **16:9 Canvas Video Player & Ken Burns Engine**: Build canvas renderer with aspect ratio locking (1920x1080), smooth panning/zooming, scene transitions (`cut`, `fade`, `dissolve`), and MachinaMind watermark.
-4. **Subtitle System & Font Customizer**: Build dual-language subtitle renderer (English, Arabic, Bilingual), font selectors (Cairo, Tajawal, Amiri), styling controls, and SRT/VTT downloaders.
-5. **TTS & Audio Sync Engine**: Build `/api/tts` route and client voiceover pipeline with audio duration computation.
-6. **Publishing Hub & Gemini Translation**: Build the YouTube publishing page with chapter timestamp generation, zero-width character cleaning, and Gemini translation endpoints.
-7. **FFmpeg Server Rendering Endpoint**: Build `/api/render` to generate the complete 16:9 MP4 file.
-8. **Verification & Polish**: Test building, dark mode styling, and complete end-to-end workflow verification.
+- **Multi-File & Folder Dropper**: Supports dropping individual files, folders (`webkitdirectory`), or multiple selections.
+- **Smart Number Parser**: Extracts numbers irrespective of prefixes (`sc`, `scene_`, `img`, `frame_`, `ch01_sc`, etc.).
+- **Atomic Loading State**: Displays a clean loading progress bar during batch processing (`Reading 33 files... 100%`) before committing.
+- **Visual Match Review & Unmatched Tray**:
+  - Highlights matched files in green with preview thumbnails.
+  - If any file remains ambiguous, shows an unmatched tray where creators can click to assign it to any scene.
+  - "Force Sequential Match (1 to N)" button for when files were exported in order from tools like Midjourney or Stable Diffusion.
+- **Single-Scene Quick Upload**: Direct drop or click on any individual scene card to replace its image.
+
+---
+
+## 4. Implementation Steps (Post-Approval)
+
+1. **`lib/image-matcher.ts`**: Implement numerical extraction, natural sorting algorithm, and multi-tier matching heuristics.
+2. **Update `components/ImageSyncHub.tsx`**: Add `Promise.all` atomic file reader, visual matching feedback, sequential mapping button, and manual assignment dropdowns.
+3. **Update `app/page.tsx`**: Implement `handleBatchUpdateScenes(updates: Map<number, Partial<SceneV7>>)` for unified atomic state commit.
+4. **Verification & Testing**: Verify with edge-case filenames (`1.png`, `01.jpg`, `scene_1.webp`, `sc001.png`, `image (1).png`) and run `compile_applet` and `lint_applet`.

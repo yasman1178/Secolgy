@@ -97,8 +97,32 @@ export default function StudioPage() {
     });
   };
 
-  const handleBatchImagesMatched = (count: number) => {
-    showNotification(`Matched ${count} artwork files to scene filenames!`);
+  const handleBatchUpdateScenes = (
+    updates: Array<{ index: number; dataUrl: string; matchedFilename?: string }>
+  ) => {
+    if (!project) return;
+    const updatesMap = new Map<number, { dataUrl: string; matchedFilename?: string }>();
+    updates.forEach((u) => updatesMap.set(u.index, { dataUrl: u.dataUrl, matchedFilename: u.matchedFilename }));
+
+    setProject((prev) => {
+      if (!prev) return prev;
+      let globalIdx = 0;
+      const updatedChapters = prev.chapters.map((ch) => {
+        const updatedScenes = ch.scenes.map((sc) => {
+          const currentIdx = globalIdx++;
+          const match = updatesMap.get(currentIdx);
+          if (match) {
+            return {
+              ...sc,
+              matchedImageData: match.dataUrl,
+            };
+          }
+          return sc;
+        });
+        return { ...ch, scenes: updatedScenes };
+      });
+      return { ...prev, chapters: updatedChapters };
+    });
   };
 
   const handleLoadDemo = () => {
@@ -229,7 +253,8 @@ export default function StudioPage() {
                 <ImageSyncHub
                   scenes={scenes}
                   onUpdateScene={handleUpdateScene}
-                  onBatchImagesMatched={handleBatchImagesMatched}
+                  onBatchUpdateScenes={handleBatchUpdateScenes}
+                  onNotify={showNotification}
                 />
 
                 <div className="pt-6 border-t border-slate-800/80">

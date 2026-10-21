@@ -1,121 +1,232 @@
 'use client';
 
 import React, { useState } from 'react';
-import { Images, Check, AlertCircle, Upload, Eye, Clock, Sparkles } from 'lucide-react';
+import {
+  Images,
+  Check,
+  AlertCircle,
+  Upload,
+  Eye,
+  Clock,
+  Sparkles,
+  ArrowDownUp,
+  RefreshCw,
+  FolderOpen,
+  FileQuestion,
+  HelpCircle,
+} from 'lucide-react';
 import { SceneV7, MotionType, TransitionType } from '@/types/studio';
+import {
+  smartMatchFilesToScenes,
+  sequentialMatchFiles,
+  readFileAsDataUrl,
+  SmartMatchReport,
+} from '@/lib/image-matcher';
 
 interface ImageSyncHubProps {
   scenes: SceneV7[];
   onUpdateScene: (index: number, updated: Partial<SceneV7>) => void;
-  onBatchImagesMatched: (matchedCount: number) => void;
+  onBatchUpdateScenes: (updates: Array<{ index: number; dataUrl: string; matchedFilename?: string }>) => void;
+  onNotify: (msg: string) => void;
 }
 
 export function ImageSyncHub({
   scenes,
   onUpdateScene,
-  onBatchImagesMatched,
+  onBatchUpdateScenes,
+  onNotify,
 }: ImageSyncHubProps) {
   const [selectedSceneIndex, setSelectedSceneIndex] = useState<number | null>(null);
   const [filterMode, setFilterMode] = useState<'all' | 'missing' | 'matched'>('all');
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [lastReport, setLastReport] = useState<SmartMatchReport | null>(null);
+  const [cachedUploadedFiles, setCachedUploadedFiles] = useState<File[]>([]);
+  const [dragActive, setDragActive] = useState(false);
 
-  // Handle batch image files drop or upload
-  const handleBatchFiles = (files: FileList | File[]) => {
-    let matchedCount = 0;
-    const fileArray = Array.from(files);
+  // Process files and update scenes atomically
+  const processFilesWithReport = async (report: SmartMatchReport) => {
+    setIsProcessing(true);
+    try {
+      const matchEntries = Array.from(report.matches.entries());
+      const updates: Array<{ index: number; dataUrl: string; matchedFilename: string }> = [];
 
-    fileArray.forEach((file) => {
-      const fileNameLower = file.name.toLowerCase();
-      // Find scene with matching image_filename or scene_id
-      scenes.forEach((scene, index) => {
-        const sceneFileLower = (scene.image_filename || '').toLowerCase();
-        const sceneIdLower = (scene.scene_id || '').toLowerCase();
+      // Read files in parallel
+      await Promise.all(
+        matchEntries.map(async ([sceneIdx, match]) => {
+          const dataUrl = await readFileAsDataUrl(match.file);
+          updates.push({
+            index: sceneIdx,
+            dataUrl,
+            matchedFilename: match.file.name,
+          });
+        })
+      );
 
-        if (
-          sceneFileLower === fileNameLower ||
-          fileNameLower.includes(sceneIdLower) ||
-          sceneFileLower.includes(fileNameLower)
-        ) {
-          const reader = new FileReader();
-          reader.onload = (e) => {
-            const dataUrl = e.target?.result as string;
-            onUpdateScene(index, { matchedImageData: dataUrl });
-          };
-          reader.readAsDataURL(file);
-          matchedCount++;
-        }
-      });
-    });
-
-    onBatchImagesMatched(matchedCount);
+      onBatchUpdateScenes(updates);
+      setLastReport(report);
+      onNotify(`Matched and synchronized ${updates.length} artwork images successfully!`);
+    } catch (err: any) {
+      console.error('File reading error:', err);
+      onNotify(`Error processing images: ${err.message}`);
+    } finally {
+      setIsProcessing(false);
+    }
   };
 
-  const handleSingleImageUpload = (index: number, file: File) => {
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      const dataUrl = e.target?.result as string;
+  // Handle batch file drop or input
+  const handleIncomingFiles = async (fileList: FileList | File[]) => {
+    const files = Array.from(fileList).filter((f) => f.type.startsWith('image/'));
+    if (files.length === 0) {
+      onNotify('No valid image files detected.');
+      return;
+    }
+
+    setCachedUploadedFiles(files);
+    // Run smart matcher
+    const report = smartMatchFilesToScenes(files, scenes);
+    await processFilesWithReport(report);
+  };
+
+  // Re-run matching sequentially
+  const handleSequentialMatch = async () => {
+    if (cachedUploadedFiles.length === 0) {
+      onNotify('Upload or select your image files first.');
+      return;
+    }
+    const report = sequentialMatchFiles(cachedUploadedFiles, scenes);
+    await processFilesWithReport(report);
+  };
+
+  // Manual assign an unmatched file to a specific scene
+  const handleManualAssign = async (file: File, sceneIndex: number) => {
+    setIsProcessing(true);
+    try {
+      const dataUrl = await readFileAsDataUrl(file);
+      onUpdateScene(sceneIndex, { matchedImageData: dataUrl });
+      onNotify(`Assigned "${file.name}" to Scene ${sceneIndex + 1}.`);
+
+      if (lastReport) {
+        const nextUnmatched = lastReport.unmatchedFiles.filter((f) => f.name !== file.name);
+        setLastReport({
+          ...lastReport,
+          unmatchedFiles: nextUnmatched,
+        });
+      }
+    } catch (err: any) {
+      onNotify(`Error assigning file: ${err.message}`);
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  // Single scene image replacement
+  const handleSingleImageUpload = async (index: number, file: File) => {
+    try {
+      const dataUrl = await readFileAsDataUrl(file);
       onUpdateScene(index, { matchedImageData: dataUrl });
-    };
-    reader.readAsDataURL(file);
+      onNotify(`Updated image for Scene ${index + 1}.`);
+    } catch (err: any) {
+      onNotify(`Error reading image: ${err.message}`);
+    }
   };
 
-  const filteredScenes = scenes.map((sc, i) => ({ scene: sc, originalIndex: i })).filter(({ scene }) => {
-    const hasCustomImage = Boolean(scene.matchedImageData && !scene.matchedImageData.startsWith('data:image/svg+xml'));
-    if (filterMode === 'matched') return hasCustomImage;
-    if (filterMode === 'missing') return !hasCustomImage;
-    return true;
-  });
+  const matchedCount = scenes.filter(
+    (s) => s.matchedImageData && !s.matchedImageData.startsWith('data:image/svg+xml')
+  ).length;
 
-  const matchedCount = scenes.filter((s) => s.matchedImageData && !s.matchedImageData.startsWith('data:image/svg+xml')).length;
+  const filteredScenes = scenes
+    .map((sc, i) => ({ scene: sc, originalIndex: i }))
+    .filter(({ scene }) => {
+      const hasCustom = Boolean(
+        scene.matchedImageData && !scene.matchedImageData.startsWith('data:image/svg+xml')
+      );
+      if (filterMode === 'matched') return hasCustom;
+      if (filterMode === 'missing') return !hasCustom;
+      return true;
+    });
 
   return (
     <div className="w-full space-y-6">
       {/* Batch Sync Drop Banner */}
-      <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl">
+      <div
+        onDragEnter={() => setDragActive(true)}
+        onDragLeave={() => setDragActive(false)}
+        onDragOver={(e) => e.preventDefault()}
+        onDrop={(e) => {
+          e.preventDefault();
+          setDragActive(false);
+          if (e.dataTransfer.files) {
+            handleIncomingFiles(e.dataTransfer.files);
+          }
+        }}
+        className={`bg-slate-900 border rounded-2xl p-6 shadow-xl transition-all ${
+          dragActive
+            ? 'border-sky-400 bg-sky-950/20'
+            : 'border-slate-800'
+        }`}
+      >
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <div className="flex items-center gap-2">
               <Images className="w-5 h-5 text-sky-400" />
               <h3 className="text-base font-bold font-outfit text-white tracking-tight">
-                2. Sync & Match 16:9 Scene Artwork
+                2. Smart Artwork Matching Engine
               </h3>
             </div>
-            <p className="text-xs text-slate-400 mt-1">
-              Drop all chapter image files at once. The engine matches files automatically by <code className="text-sky-300">image_filename</code>.
+            <p className="text-xs text-slate-400 mt-1 max-w-xl">
+              Supports any naming convention: numbered files (<code className="text-sky-300">1.png</code>, <code className="text-sky-300">02.jpg</code>), scene IDs (<code className="text-sky-300">sc01.webp</code>), or full names. The engine extracts numbers and aligns them automatically.
             </p>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-2.5">
+            {cachedUploadedFiles.length > 0 && (
+              <button
+                onClick={handleSequentialMatch}
+                disabled={isProcessing}
+                className="px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-amber-300 font-medium text-xs rounded-xl border border-slate-700/80 transition-colors flex items-center gap-1.5"
+                title="Force mapping files in ascending order (1st file to 1st scene)"
+              >
+                <ArrowDownUp className="w-3.5 h-3.5" />
+                <span>Match by Sequential Order (1 to N)</span>
+              </button>
+            )}
+
             <label className="px-4 py-2 bg-sky-500 hover:bg-sky-400 text-slate-950 font-semibold text-xs rounded-xl cursor-pointer transition-colors flex items-center gap-2 shadow-md shrink-0">
-              <Upload className="w-4 h-4" />
-              <span>Select Artwork Folder / Files</span>
+              {isProcessing ? (
+                <RefreshCw className="w-4 h-4 animate-spin" />
+              ) : (
+                <Upload className="w-4 h-4" />
+              )}
+              <span>{isProcessing ? 'Processing Images...' : 'Select or Drop Image Files'}</span>
               <input
                 type="file"
                 multiple
                 accept="image/*"
                 className="hidden"
-                onChange={(e) => e.target.files && handleBatchFiles(e.target.files)}
+                disabled={isProcessing}
+                onChange={(e) => e.target.files && handleIncomingFiles(e.target.files)}
               />
             </label>
           </div>
         </div>
 
-        {/* Sync Summary Strip */}
+        {/* Sync Summary & Filter Controls */}
         <div className="mt-5 pt-4 border-t border-slate-800/80 flex flex-wrap items-center justify-between gap-4 text-xs">
           <div className="flex items-center gap-4 text-slate-400 font-mono">
             <span>
-              <strong className="text-white">{matchedCount}</strong> of <strong className="text-white">{scenes.length}</strong> Images Synchronized
+              <strong className="text-white">{matchedCount}</strong> of <strong className="text-white">{scenes.length}</strong> Scenes Matched
             </span>
             <span aria-hidden="true">·</span>
             <span>
               {scenes.length - matchedCount === 0 ? (
-                <span className="text-emerald-400 font-medium">All Scenes Matched</span>
+                <span className="text-emerald-400 font-medium">All Scenes Matched with Artwork</span>
               ) : (
                 <span className="text-amber-400 font-medium">{scenes.length - matchedCount} using 16:9 placeholder previews</span>
               )}
             </span>
           </div>
 
-          {/* Interactive filter tabs */}
+          {/* Filter tabs */}
           <div className="flex items-center gap-1 bg-slate-950 p-1 rounded-lg border border-slate-800">
             <button
               onClick={() => setFilterMode('all')}
@@ -143,6 +254,45 @@ export function ImageSyncHub({
             </button>
           </div>
         </div>
+
+        {/* Unmatched Files Tray (if any file couldn't be auto-matched) */}
+        {lastReport && lastReport.unmatchedFiles.length > 0 && (
+          <div className="mt-4 p-4 rounded-xl bg-slate-950 border border-slate-800 space-y-2">
+            <div className="flex items-center gap-2 text-amber-300 text-xs font-medium">
+              <FileQuestion className="w-4 h-4 text-amber-400" />
+              <span>Unmatched Uploaded Files ({lastReport.unmatchedFiles.length}):</span>
+            </div>
+            <p className="text-[11px] text-slate-400">
+              These files could not be safely matched by number or name. Click to manually assign any file:
+            </p>
+            <div className="flex flex-wrap gap-2 pt-1">
+              {lastReport.unmatchedFiles.map((file, idx) => (
+                <div
+                  key={idx}
+                  className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-xs text-slate-300"
+                >
+                  <span className="font-mono text-[11px] text-white truncate max-w-[140px]">{file.name}</span>
+                  <select
+                    defaultValue=""
+                    onChange={(e) => {
+                      if (e.target.value !== '') {
+                        handleManualAssign(file, Number(e.target.value));
+                      }
+                    }}
+                    className="bg-slate-950 border border-slate-700 rounded px-1.5 py-0.5 text-[11px] text-sky-400"
+                  >
+                    <option value="" disabled>Assign to Scene...</option>
+                    {scenes.map((s, sIdx) => (
+                      <option key={s.scene_id} value={sIdx}>
+                        Scene {sIdx + 1} ({s.scene_id})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Grid of Scenes */}
@@ -167,15 +317,15 @@ export function ImageSyncHub({
                     className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
                   />
                 ) : (
-                  <div className="w-full h-full flex items-center justify-center text-slate-700 text-xs">
-                    No Preview
+                  <div className="w-full h-full flex items-center justify-center text-slate-700 text-xs font-mono">
+                    Scene {originalIndex + 1} Placeholder
                   </div>
                 )}
 
                 {/* Top status bar overlay */}
                 <div className="absolute top-2 left-2 right-2 flex items-center justify-between pointer-events-none">
                   <span className="px-2 py-0.5 rounded text-[11px] font-mono font-semibold bg-slate-950/80 text-white backdrop-blur-sm border border-slate-800">
-                    {scene.scene_id}
+                    #{originalIndex + 1} · {scene.scene_id}
                   </span>
 
                   <span
@@ -186,7 +336,7 @@ export function ImageSyncHub({
                     }`}
                   >
                     {isCustomImage ? <Check className="w-3 h-3" /> : <AlertCircle className="w-3 h-3" />}
-                    <span>{isCustomImage ? 'Artwork Matched' : '16:9 Placeholder'}</span>
+                    <span>{isCustomImage ? 'Matched' : 'Placeholder'}</span>
                   </span>
                 </div>
 
@@ -210,7 +360,7 @@ export function ImageSyncHub({
                 <div>
                   <div className="flex items-center justify-between text-xs text-slate-400 font-mono mb-1.5">
                     <span className="truncate max-w-[200px]" title={scene.image_filename}>
-                      {scene.image_filename}
+                      Target: {scene.image_filename}
                     </span>
                     <span className="flex items-center gap-1 shrink-0 text-slate-500">
                       <Clock className="w-3 h-3" />
