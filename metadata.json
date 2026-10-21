@@ -1,0 +1,6 @@
+{
+  "name": "MachinaMind 16:9 Studio",
+  "description": "Long-form 16:9 documentary video studio for schema v7 JSON synchronization, artwork matching, custom subtitles, FFmpeg MP4 export, and YouTube publishing metadata.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

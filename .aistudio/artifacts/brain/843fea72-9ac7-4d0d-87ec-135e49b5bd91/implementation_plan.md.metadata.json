@@ -1,0 +1,6 @@
+{
+  "summary":  "Implementation plan for MachinaMind 16:9 Long-Form Video Studio: JSON v7 synchronization, scene and shot image matching, client-side Canvas and server-side FFmpeg MP4 export engine, customizable subtitles (English, Arabic, Bilingual), font typography, MachinaMind branding overlay, dark mode support, and publishing metadata manager with one-click sanitization and Arabic-English translation.",
+  "updatedAt":  "2026-10-21T01:05:51.552414790Z",
+  "requestFeedback":  true,
+  "userFacing":  true
+}
